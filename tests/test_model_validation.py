@@ -136,6 +136,7 @@ def test_invalid_impervious_fraction_rejected(bad_fraction):
     with pytest.raises(ValueError, match="fi"):
         Builder().basin(centroid, basin)
 
+
 class QgisNullValue:
     """Stand-in for a null QVariant returned by QGIS 3 feature attributes."""
 

@@ -187,6 +187,7 @@ def test_flattened_hole_and_multipart_examples_are_rejected(qgis_adapter, kind, 
     with pytest.raises(ValueError, match=r"rings.*holes.*QGIS"):
         geometry.ogr_polygon(adapter(source).geometry(0))
 
+
 @pytest.mark.parametrize(
     "kind,wkt,fields,attributes,missing",
     [

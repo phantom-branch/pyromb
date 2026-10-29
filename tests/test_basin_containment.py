@@ -151,6 +151,7 @@ def test_duplicate_catchment_ids_are_error(ogr_backend):
             MemoryLayer([(rectangle(0, 10), {}), (rectangle(20, 30), {})]),
         )
 
+
 @pytest.mark.parametrize(
     "category,geometry,record,expected",
     [
@@ -179,6 +180,7 @@ def test_geometryless_features_raise_actionable_errors(
                 MemoryLayer([([(5, 5)], {"id": "B1", "fi": 0.0})]),
                 layer,
             )
+
 
 @pytest.mark.parametrize("coordinates", [[None], [(0,)], [3]])
 def test_malformed_single_point_reports_valueerror(coordinates):
