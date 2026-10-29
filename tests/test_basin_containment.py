@@ -150,3 +150,41 @@ def test_duplicate_catchment_ids_are_error(ogr_backend):
             ]),
             MemoryLayer([(rectangle(0, 10), {}), (rectangle(20, 30), {})]),
         )
+
+
+@pytest.mark.parametrize(
+    "category,geometry,record,expected",
+    [
+        ("Confluence", [], {"id": "OUT", "out": 1}, "Confluence feature 0"),
+        ("Reach", [], {"id": "R", "t": 1, "s": 0.01}, "Reach feature 0"),
+        ("Centroid", [], {"id": "B1", "fi": 0.0}, "Centroid feature 0"),
+        ("Basin", [], {}, "Basin polygon feature 0"),
+    ],
+)
+def test_geometryless_features_raise_actionable_errors(
+    category, geometry, record, expected
+):
+    """Missing feature geometry is not an IndexError (issues #13, #21)."""
+    layer = MemoryLayer([(geometry, record)])
+    builder = Builder()
+    with pytest.raises(ValueError, match=rf"{expected} has no geometry.*QGIS"):
+        if category == "Confluence":
+            builder.confluence(layer)
+        elif category == "Reach":
+            builder.reach(layer)
+        elif category == "Centroid":
+            pytest.importorskip("osgeo.ogr")
+            builder.basin(layer, MemoryLayer([(rectangle(0, 10), {})]))
+        else:
+            builder.basin(
+                MemoryLayer([([(5, 5)], {"id": "B1", "fi": 0.0})]),
+                layer,
+            )
+
+
+@pytest.mark.parametrize("coordinates", [[None], [(0,)], [3]])
+def test_malformed_single_point_reports_valueerror(coordinates):
+    with pytest.raises(ValueError, match="Confluence feature 0 has invalid coordinates"):
+        Builder().confluence(
+            MemoryLayer([(coordinates, {"id": "OUT", "out": True})])
+        )

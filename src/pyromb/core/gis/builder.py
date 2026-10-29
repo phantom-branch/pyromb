@@ -24,6 +24,14 @@ class Builder:
     """
 
     @staticmethod
+    def _is_missing(value: object) -> bool:
+        """Recognise Python None, blank strings, and QGIS 3 null QVariants."""
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return True
+        is_null = getattr(value, "isNull", None)
+        return bool(is_null()) if callable(is_null) else False
+
+    @staticmethod
     def _record(layer: VectorLayer, index: int, fields: tuple[str, ...], kind: str) -> _Record:
         record: _Record = layer.record(index)
         for field in fields:
@@ -33,7 +41,7 @@ class Builder:
                 raise ValueError(
                     f"{kind} feature {index} is missing required field {field!r}"
                 ) from exc
-            if value is None or (isinstance(value, str) and not value.strip()):
+            if Builder._is_missing(value):
                 raise ValueError(
                     f"{kind} feature {index} has an empty required field {field!r}"
                 )
@@ -77,11 +85,16 @@ class Builder:
     @staticmethod
     def _point(layer: VectorLayer, index: int, kind: str) -> tuple[float, float]:
         coordinates = layer.geometry(index)
-        if not coordinates or len(coordinates) != 1 or len(coordinates[0]) < 2:
+        if not coordinates:
+            raise ValueError(
+                f"{kind} feature {index} has no geometry; "
+                "repair or delete the empty feature in QGIS"
+            )
+        if len(coordinates) != 1:
             raise ValueError(f"{kind} feature {index} must have exactly one point")
         try:
             x, y = float(coordinates[0][0]), float(coordinates[0][1])
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, IndexError, OverflowError) as exc:
             raise ValueError(f"{kind} feature {index} has invalid coordinates") from exc
         if not math.isfinite(x) or not math.isfinite(y):
             raise ValueError(f"{kind} feature {index} has non-finite coordinates")
@@ -93,6 +106,11 @@ class Builder:
         for i in range(len(reach)):
             record = self._record(reach, i, ("id", "t", "s"), "Reach")
             points = reach.geometry(i)
+            if not points:
+                raise ValueError(
+                    f"Reach feature {i} has no geometry; "
+                    "repair or delete the empty feature in QGIS"
+                )
             try:
                 geometry.validate_line(points)
             except ValueError as exc:
@@ -125,6 +143,11 @@ class Builder:
         polygons = []
         for i in range(len(basin)):
             vertices = basin.geometry(i)
+            if not vertices:
+                raise ValueError(
+                    f"Basin polygon feature {i} has no geometry; "
+                    "repair or delete the empty feature in QGIS"
+                )
             try:
                 polygon = geometry.ogr_polygon(vertices)
             except (TypeError, ValueError) as exc:
