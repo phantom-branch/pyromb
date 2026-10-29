@@ -47,7 +47,8 @@ def layer_factory(request, tmp_path):
             layer.CreateField(ogr.FieldDefn(name, getattr(ogr, kind)))
         for values in records:
             feature = ogr.Feature(layer.GetLayerDefn())
-            feature.SetGeometry(ogr.CreateGeometryFromWkt(geometry))
+            if geometry is not None:
+                feature.SetGeometry(ogr.CreateGeometryFromWkt(geometry))
             for name, value in values.items():
                 if value is not None:
                     feature.SetField(name, value)
@@ -183,3 +184,60 @@ def test_flattened_hole_and_multipart_examples_are_rejected(qgis_adapter, kind, 
     # Additional flattened rings/parts must not produce an incorrect basin area.
     with pytest.raises(ValueError, match=r"rings.*holes.*QGIS"):
         geometry.ogr_polygon(adapter(source).geometry(0))
+
+@pytest.mark.parametrize(
+    "kind,wkt,fields,attributes,missing",
+    [
+        ("Reach", "LINESTRING (0 0,10 0)", [("id", "OFTString"), ("t", "OFTReal")],
+         {"id": "R1", "t": 1}, "s"),
+        ("Confluence", "POINT (10 0)", [("id", "OFTString")],
+         {"id": "OUT"}, "out"),
+        ("Centroid", "POINT (5 5)", [("id", "OFTString")],
+         {"id": "B1"}, "fi"),
+    ],
+)
+def test_missing_field_names_category_and_feature(
+    layer_factory, kind, wkt, fields, attributes, missing
+):
+    layer = layer_factory(wkt, fields, [attributes])
+    with pytest.raises(
+        ValueError, match=rf"{kind} feature 0.*missing required field '{missing}'"
+    ):
+        if kind == "Reach":
+            Builder().reach(layer)
+        elif kind == "Confluence":
+            Builder().confluence(layer)
+        else:
+            polygon = layer_factory("POLYGON ((0 0,10 0,10 10,0 10,0 0))", [], [{}])
+            Builder().basin(layer, polygon)
+
+
+def test_qgis_geometryless_confluence_is_actionable(qgis_adapter):
+    """Upstream issue #21: a real QgsFeature with no geometry is reported."""
+    core, adapter = qgis_adapter
+    source = core.QgsVectorLayer(
+        "Point?crs=EPSG:28350&field=id:string&field=out:integer",
+        "confluences", "memory",
+    )
+    assert source.isValid()
+    feature = core.QgsFeature(source.fields())
+    feature.setAttributes(["OUT", 1])
+    assert source.dataProvider().addFeatures([feature])[0]
+    assert not next(source.getFeatures()).hasGeometry()
+
+    with pytest.raises(
+        ValueError, match="Confluence feature 0 has no geometry.*QGIS"
+    ):
+        Builder().confluence(adapter(source))
+
+
+def test_ogr_geometryless_confluence_is_actionable(layer_factory):
+    """The standalone OGR adapter must handle a null feature geometry too."""
+    layer = layer_factory(
+        None, [("id", "OFTString"), ("out", "OFTInteger")],
+        [{"id": "OUT", "out": 1}],
+    )
+    with pytest.raises(
+        ValueError, match="Confluence feature 0 has no geometry.*QGIS"
+    ):
+        Builder().confluence(layer)

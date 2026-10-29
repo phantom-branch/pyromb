@@ -21,6 +21,8 @@ class Vector(VectorLayer):
         from osgeo import ogr
 
         geometry = self.features[i].GetGeometryRef()
+        if geometry is None:
+            return []
         if geometry.GetGeometryType() == ogr.wkbPolygon:
             # Match QVectorLayer.vertices(): retain each ring's closing vertex.
             return [

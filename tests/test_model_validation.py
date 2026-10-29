@@ -135,3 +135,32 @@ def test_invalid_impervious_fraction_rejected(bad_fraction):
     )])
     with pytest.raises(ValueError, match="fi"):
         Builder().basin(centroid, basin)
+
+class QgisNullValue:
+    """Stand-in for a null QVariant returned by QGIS 3 feature attributes."""
+
+    def isNull(self) -> bool:
+        return True
+
+
+@pytest.mark.parametrize("field", ["id", "t", "s"])
+def test_qgis3_null_variant_rejected_as_missing_reach_attribute(field):
+    with pytest.raises(ValueError, match=rf"Reach feature 0.*empty required field '{field}'"):
+        Builder().reach(reaches(**{field: QgisNullValue()}))
+
+
+def test_qgis3_null_variant_rejected_as_missing_outlet_flag():
+    with pytest.raises(ValueError, match=r"Confluence feature 0.*empty required field 'out'"):
+        Builder().confluence(confluences(QgisNullValue()))
+
+
+def test_qgis3_null_variant_rejected_as_missing_centroid_attribute():
+    pytest.importorskip("osgeo.ogr")
+    polygon = MemoryLayer([(
+        [(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)], {}
+    )])
+    centroid = MemoryLayer([(
+        [(5, 5)], {"id": "B1", "fi": QgisNullValue()}
+    )])
+    with pytest.raises(ValueError, match=r"Centroid feature 0.*empty required field 'fi'"):
+        Builder().basin(centroid, polygon)
