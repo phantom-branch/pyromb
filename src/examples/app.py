@@ -31,7 +31,7 @@ class OGRVectorLayer(pyromb.VectorLayer):
         geometry = self.features[i].GetGeometryRef()
         if geometry is None:
             return []
-        kind = ogr.wkbFlatten(geometry.GetGeometryType())
+        kind = ogr.GT_Flatten(geometry.GetGeometryType())
         if kind == ogr.wkbPolygon:
             # Retain closed interior rings so Builder rejects unsupported holes.
             return [
