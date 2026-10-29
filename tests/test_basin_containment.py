@@ -179,3 +179,10 @@ def test_geometryless_features_raise_actionable_errors(
                 MemoryLayer([([(5, 5)], {"id": "B1", "fi": 0.0})]),
                 layer,
             )
+
+@pytest.mark.parametrize("coordinates", [[None], [(0,)], [3]])
+def test_malformed_single_point_reports_valueerror(coordinates):
+    with pytest.raises(ValueError, match="Confluence feature 0 has invalid coordinates"):
+        Builder().confluence(
+            MemoryLayer([(coordinates, {"id": "OUT", "out": True})])
+        )
