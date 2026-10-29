@@ -42,7 +42,9 @@ def layer_factory(request, tmp_path):
         # Both adapters read the very same shapefile storage representations.
         path = tmp_path / f"layer-{len(list(tmp_path.glob('*.shp')))}.shp"
         dataset = ogr.GetDriverByName("ESRI Shapefile").CreateDataSource(str(path))
-        layer = dataset.CreateLayer("layer", geom_type=ogr.wkbUnknown)
+        layer = dataset.CreateLayer(
+            "layer", geom_type=ogr.wkbPoint if geometry is None else ogr.wkbUnknown
+        )
         for name, kind in fields:
             layer.CreateField(ogr.FieldDefn(name, getattr(ogr, kind)))
         for values in records:
