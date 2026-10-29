@@ -90,11 +90,11 @@ class Builder:
                 f"{kind} feature {index} has no geometry; "
                 "repair or delete the empty feature in QGIS"
             )
-        if len(coordinates) != 1 or len(coordinates[0]) < 2:
+        if len(coordinates) != 1:
             raise ValueError(f"{kind} feature {index} must have exactly one point")
         try:
             x, y = float(coordinates[0][0]), float(coordinates[0][1])
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, IndexError, OverflowError) as exc:
             raise ValueError(f"{kind} feature {index} has invalid coordinates") from exc
         if not math.isfinite(x) or not math.isfinite(y):
             raise ValueError(f"{kind} feature {index} has non-finite coordinates")
