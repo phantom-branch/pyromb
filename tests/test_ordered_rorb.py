@@ -79,3 +79,18 @@ def test_unsupported_values_are_rejected(which: str, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         render_ordered_catg(title, controls, areas, (Decimal("0.2"), Decimal("0.3")),
                             explicit_reach_types=True, nodes=nodes, reaches=reaches)
+
+
+def test_legacy_intermediate_and_terminal_prints_preserve_order() -> None:
+    records = (
+        OrderedControl(1, Decimal("1.0"), label="Reach Sub-area A"),
+        OrderedControl(7, physical_print="Interior"),
+        OrderedControl(5, Decimal("2.5"), label="Downstream"),
+        OrderedControl(7, physical_print="Outlet"),
+    )
+    data = render_ordered_catg(
+        "Two print sites", records, (Decimal("1.25"),), (Decimal(0),),
+        explicit_reach_types=False,
+    )
+    assert "1, 1.0, -99, Reach Sub-area A\n7\nInterior\n5, 2.5, -99, Downstream\n7\nOutlet\n0\n" in data
+

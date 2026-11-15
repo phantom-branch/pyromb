@@ -167,7 +167,13 @@ class VectorBlock():
                     raise ValueError("The physical print-location record cannot be a zero terminator or comment")
                 lines.extend((f"7, {label}" if label else "7", physical))
                 prints += 1
-        if sources != len(areas_km2) or not reaches or prints != 1 or controls[-1].code != 7:
+        if (
+            sources != len(areas_km2)
+            or not reaches
+            or prints < 1
+            or controls[-1].code != 7
+            or (explicit_reach_types and prints != 1)
+        ):
             raise ValueError("Ordered control/source/print counts are inconsistent")
         lines.extend(("0", resources.rorb.AREA_TABLE_HEADER.rstrip("\n")))
         area_tokens = [*(_ordered_number(a, "Source area") for a in areas_km2), "-99"]
