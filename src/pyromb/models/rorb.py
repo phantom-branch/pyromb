@@ -1,5 +1,11 @@
+from __future__ import annotations
+
 import json
+import math
 import os
+from dataclasses import dataclass
+from decimal import Decimal
+from collections.abc import Sequence
 
 from .. import resources
 from ..core.attributes.basin import Basin
@@ -7,6 +13,59 @@ from ..core.attributes.confluence import Confluence
 from ..core.attributes.reach import ReachType
 from ..core.traveller import Traveller
 from ..core.model import Model
+
+
+
+@dataclass(frozen=True)
+class OrderedControl:
+    """A native control, in the already-validated computation sequence."""
+
+    code: int
+    length_km: Decimal | None = None
+    label: str = ""
+    physical_print: str = ""
+
+
+@dataclass(frozen=True)
+class OrderedNode:
+    """Graphical metadata only; XY coordinates are never physical reach lengths."""
+
+    identifier: int
+    name: str
+    x: float
+    y: float
+    downstream: int
+    source: bool
+    outlet: bool
+    area_km2: Decimal = Decimal(0)
+    impervious_fraction: Decimal = Decimal(0)
+
+
+@dataclass(frozen=True)
+class OrderedReach:
+    """A native graphical reach with an independently supplied physical length."""
+
+    identifier: int
+    name: str
+    upstream: int
+    downstream: int
+    x: float
+    y: float
+    length_km: Decimal
+
+
+def _ordered_number(value: Decimal, what: str, *, places: int | None = None) -> str:
+    if not isinstance(value, Decimal) or not value.is_finite() or value < 0:
+        raise ValueError(f"{what} must be a finite nonnegative Decimal")
+    if places is not None and value != value.quantize(Decimal(1).scaleb(-places)):
+        raise ValueError(f"{what} cannot fit the RORB_GE graphical {places}-decimal field")
+    return str(value)
+
+
+def _ordered_label(value: str, what: str) -> str:
+    if not isinstance(value, str) or value != value.strip() or any(c in value for c in (",", "\r", "\n", "\x00")):
+        raise ValueError(f"{what} cannot contain commas, record delimiters or surrounding whitespace")
+    return value
 
 
 class VectorBlock():
@@ -57,6 +116,71 @@ class VectorBlock():
             vectorStr += f"{s}\n"
         vectorStr += f"{self._subAreaStr(self._stateVector, traveller)}\n{self._fracImpStr(self._stateVector, traveller)}\n"
         return vectorStr
+
+
+    def build_ordered(
+        self,
+        controls: Sequence[OrderedControl],
+        areas_km2: Sequence[Decimal],
+        impervious_fractions: Sequence[Decimal],
+        *,
+        explicit_reach_types: bool,
+    ) -> str:
+        """Render ordered records without reconstructing their order from drawing XY."""
+        if not areas_km2 or len(areas_km2) != len(impervious_fractions):
+            raise ValueError("One impervious fraction is required for each ordered source area")
+        lines = ["0" if explicit_reach_types else "1"]
+        sources = 0
+        reaches = 0
+        prints = 0
+        for record in controls:
+            code = record.code
+            if type(code) is not int or code not in (1, 2, 3, 4, 5, 7):
+                raise ValueError(f"Unsupported ordered RORB control code {code!r}")
+            label = _ordered_label(record.label, f"Control {code} label")
+            if code in (1, 2, 5):
+                if record.length_km is None or record.length_km <= 0:
+                    raise ValueError(f"Control {code} requires a positive physical length in kilometres")
+                length = _ordered_number(record.length_km, "Physical reach length", places=3 if explicit_reach_types else None)
+                if explicit_reach_types:
+                    if label:
+                        raise ValueError(f"RORB_GE 6.45 cannot encode an independent code-{code} label")
+                    lines.append(f"{code},1,{length},-99")
+                else:
+                    if code == 2:
+                        raise ValueError("Code 2 needs RORB_GE 6.45 explicit-reach encoding")
+                    lines.append(f"{code}, {length}, -99, {label}")
+                reaches += 1
+                if code in (1, 2):
+                    sources += 1
+            elif code in (3, 4):
+                if record.length_km is not None or record.physical_print:
+                    raise ValueError(f"Control {code} cannot carry reach or print operands")
+                lines.append(f"{code}, {label}" if label else str(code))
+            else:
+                if record.length_km is not None:
+                    raise ValueError("Control 7 cannot carry a reach")
+                physical = _ordered_label(record.physical_print, "Physical print-location label")
+                if physical == "0" or physical.startswith(("C ", "C\t")):
+                    raise ValueError("The physical print-location record cannot be a zero terminator or comment")
+                lines.extend((f"7, {label}" if label else "7", physical))
+                prints += 1
+        if sources != len(areas_km2) or not reaches or prints != 1 or controls[-1].code != 7:
+            raise ValueError("Ordered control/source/print counts are inconsistent")
+        lines.extend(("0", resources.rorb.AREA_TABLE_HEADER.rstrip("\n")))
+        lines.append(self._makeTable([*(_ordered_number(a, "Source area") for a in areas_km2), "-99"], "area_table"))
+        lines.append(resources.rorb.FI_TABLE_HEADER.rstrip("\n"))
+        for fraction in impervious_fractions:
+            _ordered_number(fraction, "Impervious fraction")
+            if fraction > 1:
+                raise ValueError("Impervious fractions must be in [0, 1]")
+        if explicit_reach_types:
+            lines.extend(("1", self._makeTable([*(str(f) for f in impervious_fractions), "-99"], "fi_table")))
+        else:
+            if any(f != 0 for f in impervious_fractions):
+                raise ValueError("RORB_GE 002 cannot encode per-source impervious fractions")
+            lines.append("0, -99")
+        return "\n".join(lines) + "\n"
 
     def _state(self, traveller: Traveller) -> None:
         """Store the current state of the traveller within the catchment at each time step.
@@ -264,7 +388,7 @@ class GraphicsBlock():
         self._nodeDisplay(code, traveller)
         self._reachDisplay(code, traveller)
 
-    def build(self) -> str:
+    def build(self, *, title: str = "REACH", version: str = "6.45", preserve_aspect: bool = False) -> str:
         """Build the graphical block string for the .catg file.
         
         Returns:
@@ -274,10 +398,20 @@ class GraphicsBlock():
         """
         self._replaceIDTags(self._nodeVector)
         self._replaceIDTags(self._reachVector)
-        self._normalizeCoordinates()
+        self._normalizeCoordinates(preserve_aspect=preserve_aspect)
+        if version == "6.45":
+            header = resources.rorb.GRAPHICAL_HEADER.replace("REACH\\n", f"{title}\\n", 1)
+        elif version == "002":
+            header = (
+                f"{title}\\nC RORB_GE 002\\nC\\nC {title}\\nC\\n"
+                "C #FILE COMMENTS\\nC   0\\nC\\nC #SUB-AREA AREA COMMENTS\\nC   0\\nC\\n"
+                "C #IMPERVIOUS FRACTION COMMENTS\\nC   0\\nC\\nC #BACKGROUND IMAGE\\nC  T  F\\nC\\n"
+            )
+        else:
+            raise ValueError(f"Unknown graphical export version {version!r}")
 
         graphicalStr = (
-            f"{resources.rorb.GRAPHICAL_HEADER}"
+            f"{header}"
             f"{self._generateNodeString()}"
             f"{resources.rorb.LEADING_TOKEN}\n"
             f"{self._generateReachString()}"
@@ -299,7 +433,7 @@ class GraphicsBlock():
                 if v in self._idMap:
                     vector[i][k] = self._idMap[v]
 
-    def _normalizeCoordinates(self, scale: float = 90.0, shift: float = 2.5) -> None:
+    def _normalizeCoordinates(self, scale: float = 90.0, shift: float = 2.5, *, preserve_aspect: bool = False) -> None:
         """Normalize the coordinates of the catchment to fit within the RORB GE window.
 
         Parameters
@@ -309,18 +443,20 @@ class GraphicsBlock():
         shift : float
             The shift factor to apply to the coordinates.
         """
-        xs = [row['x'] for row in self._nodeVector]
-        ys = [row['y'] for row in self._nodeVector]
-        scale_x = max(xs) - min(xs)
-        scale_y = max(ys) - min(ys)
-
-        for i, row in enumerate(self._nodeVector):
-            self._nodeVector[i]['x'] = (row['x'] - min(xs)) / scale_x * scale + shift
-            self._nodeVector[i]['y'] = (row['y'] - min(ys)) / scale_y * scale + shift
-
-        for i, row in enumerate(self._reachVector):
-            self._reachVector[i]['x'] = (row['x'] - min(xs)) / scale_x * scale + shift
-            self._reachVector[i]['y'] = (row['y'] - min(ys)) / scale_y * scale + shift
+        if not self._nodeVector:
+            return
+        xs = [row["x"] for row in self._nodeVector]
+        ys = [row["y"] for row in self._nodeVector]
+        min_x, min_y = min(xs), min(ys)
+        range_x, range_y = max(xs) - min_x, max(ys) - min_y
+        shared = max(range_x, range_y)
+        if shared <= 0:
+            raise ValueError("Graphical node coordinate extent must be nondegenerate")
+        denom_x = shared if preserve_aspect else range_x
+        denom_y = shared if preserve_aspect else range_y
+        for row in (*self._nodeVector, *self._reachVector):
+            row["x"] = (row["x"] - min_x) / denom_x * scale + shift if denom_x else shift
+            row["y"] = (row["y"] - min_y) / denom_y * scale + shift if denom_y else shift
 
     def _generateNodeString(self) -> str:
         """Generates the display information string for the nodes.
@@ -477,3 +613,71 @@ class RORB(Model):
             graphicBlock.step(vectorBlock.state[-1], traveller)
 
         return graphicBlock.build() + vectorBlock.build(traveller)
+
+def render_ordered_catg(
+    title: str,
+    controls: Sequence[OrderedControl],
+    areas_km2: Sequence[Decimal],
+    impervious_fractions: Sequence[Decimal],
+    *,
+    explicit_reach_types: bool,
+    nodes: Sequence[OrderedNode] = (),
+    reaches: Sequence[OrderedReach] = (),
+) -> str:
+    """Public ordered RORB_GE writer, independent of GIS traversal.
+
+    Graphical XY is display-only. Physical lengths come exclusively from the
+    ordered controls and explicit graphical-reach length fields. No generated
+    control is inferred from normalized display coordinates.
+    """
+    title = _ordered_label(title, "Catchment title")
+    if not title:
+        raise ValueError("Catchment title cannot be empty")
+    vector = VectorBlock().build_ordered(controls, areas_km2, impervious_fractions,
+                                         explicit_reach_types=explicit_reach_types)
+    if not nodes and not reaches and not explicit_reach_types:
+        return (
+            f"{title}\nC RORB_GE 002\nC #NODES\nC 0\nC #REACHES\nC 0\n"
+            "C #STORAGES\nC 0\nC #INFLOW/OUTFLOW\nC 0\nC END RORB_GE\n" + vector
+        )
+    if not nodes or not reaches or len(reaches) != len(nodes) - 1:
+        raise ValueError("Edited RORB_GE 6.45 requires explicit ordered graphical nodes and reaches")
+    if [n.identifier for n in nodes] != list(range(1, len(nodes) + 1)):
+        raise ValueError("Graphical node IDs must be consecutive and source ordered")
+    if [r.identifier for r in reaches] != list(range(1, len(reaches) + 1)):
+        raise ValueError("Graphical reach IDs must be consecutive and source ordered")
+    if sum(n.outlet for n in nodes) != 1:
+        raise ValueError("Exactly one graphical outlet print 70 is supported")
+    ids = {n.identifier for n in nodes}
+    for node in nodes:
+        if not math.isfinite(node.x) or not math.isfinite(node.y) or node.downstream not in (*ids, 0):
+            raise ValueError(f"Graphical node {node.identifier} has invalid XY or downstream reference")
+        _ordered_number(node.area_km2, "Graphical node area", places=6)
+        _ordered_number(node.impervious_fraction, "Graphical node impervious fraction", places=6)
+        if node.impervious_fraction > 1:
+            raise ValueError("Graphical node impervious fraction exceeds 1")
+        _ordered_label(node.name, "Graphical node name")
+    for reach in reaches:
+        if (reach.upstream not in ids or reach.downstream not in ids
+                or not math.isfinite(reach.x) or not math.isfinite(reach.y)):
+            raise ValueError(f"Graphical reach {reach.identifier} has invalid endpoints or XY")
+        if reach.length_km <= 0:
+            raise ValueError("Graphical reach length must be positive")
+        _ordered_number(reach.length_km, "Graphical reach length", places=3)
+        _ordered_label(reach.name, "Graphical reach name")
+    graphics = GraphicsBlock()
+    graphics._nodeVector = [{
+        "id": n.identifier, "x": n.x, "y": n.y, "icon": 1.0, "basin": int(n.source),
+        "end": int(n.outlet), "ds": n.downstream, "name": f" {n.name}",
+        "area": n.area_km2, "fi": n.impervious_fraction,
+        "print": 70 if n.outlet else 0, "excess": 0, "comment": 0,
+    } for n in nodes]
+    graphics._reachVector = [{
+        "id": r.identifier, "name": f" {r.name}", "us": r.upstream,
+        "ds": r.downstream, "translation": 0, "type": 1, "print": 0,
+        "length": r.length_km, "slope": 0.0, "npoints": 1, "comment": 0,
+        "x": r.x, "y": r.y,
+    } for r in reaches]
+    return graphics.build(title=title, version="6.45" if explicit_reach_types else "002",
+                          preserve_aspect=True) + vector
+
