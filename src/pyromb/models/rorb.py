@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import math
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from collections.abc import Sequence
 
 from .. import resources
 from ..core.attributes.basin import Basin
@@ -141,7 +141,9 @@ class VectorBlock():
             if code in (1, 2, 5):
                 if record.length_km is None or record.length_km <= 0:
                     raise ValueError(f"Control {code} requires a positive physical length in kilometres")
-                length = _ordered_number(record.length_km, "Physical reach length", places=3 if explicit_reach_types else None)
+                length = _ordered_number(
+                    record.length_km, "Physical reach length", places=3 if explicit_reach_types else None
+                )
                 if explicit_reach_types:
                     if label:
                         raise ValueError(f"RORB_GE 6.45 cannot encode an independent code-{code} label")
@@ -168,14 +170,16 @@ class VectorBlock():
         if sources != len(areas_km2) or not reaches or prints != 1 or controls[-1].code != 7:
             raise ValueError("Ordered control/source/print counts are inconsistent")
         lines.extend(("0", resources.rorb.AREA_TABLE_HEADER.rstrip("\n")))
-        lines.append(self._makeTable([*(_ordered_number(a, "Source area") for a in areas_km2), "-99"], "area_table"))
+        area_tokens = [*(_ordered_number(a, "Source area") for a in areas_km2), "-99"]
+        lines.append(self._makeTable(area_tokens, "area_table"))
         lines.append(resources.rorb.FI_TABLE_HEADER.rstrip("\n"))
         for fraction in impervious_fractions:
             _ordered_number(fraction, "Impervious fraction")
             if fraction > 1:
                 raise ValueError("Impervious fractions must be in [0, 1]")
         if explicit_reach_types:
-            lines.extend(("1", self._makeTable([*(str(f) for f in impervious_fractions), "-99"], "fi_table")))
+            fraction_tokens = [*(str(f) for f in impervious_fractions), "-99"]
+            lines.extend(("1", self._makeTable(fraction_tokens, "fi_table")))
         else:
             if any(f != 0 for f in impervious_fractions):
                 raise ValueError("RORB_GE 002 cannot encode per-source impervious fractions")
