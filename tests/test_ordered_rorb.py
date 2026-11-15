@@ -18,9 +18,9 @@ def _modern() -> tuple[str, tuple[OrderedControl, ...], tuple[OrderedNode, ...],
     )
     nodes = (
         OrderedNode(1, "A", 0, 0, 2, True, False, Decimal("1.25000"), Decimal("0.2")),
-        OrderedNode(2, "Join", 5000, 0, 4, False, False),
+        OrderedNode(2, "J", 5000, 0, 4, False, False),
         OrderedNode(3, "B", 5000, 4000, 2, True, False, Decimal("2.50000"), Decimal("0.3")),
-        OrderedNode(4, "Outlet", 7500, 0, 0, False, True),
+        OrderedNode(4, "O", 7500, 0, 0, False, True),
     )
     reaches = (
         OrderedReach(1, "R1", 1, 2, 2500, 0, Decimal("5.000")),
@@ -94,3 +94,31 @@ def test_legacy_intermediate_and_terminal_prints_preserve_order() -> None:
     )
     assert "1, 1.0, -99, Reach Sub-area A\n7\nInterior\n5, 2.5, -99, Downstream\n7\nOutlet\n0\n" in data
 
+
+@pytest.mark.parametrize(("kind", "message"), [
+    ("source_area", "Graphical source order"),
+    ("source_fi", "Graphical source order"),
+    ("reach_length", "Graphical reach order"),
+    ("node_name", "Graphical node name"),
+    ("reach_name", "Graphical reach name"),
+])
+def test_conflicting_or_overwidth_graphical_records_fail_closed(kind: str, message: str) -> None:
+    from dataclasses import replace
+
+    title, controls, nodes, reaches = _modern()
+    if kind == "source_area":
+        nodes = (replace(nodes[0], area_km2=Decimal("9")), *nodes[1:])
+    elif kind == "source_fi":
+        nodes = (replace(nodes[0], impervious_fraction=Decimal("0.1")), *nodes[1:])
+    elif kind == "reach_length":
+        reaches = (replace(reaches[0], length_km=Decimal("9.000")), *reaches[1:])
+    elif kind == "node_name":
+        nodes = (nodes[0], replace(nodes[1], name="Join"), *nodes[2:])
+    else:
+        reaches = (replace(reaches[0], name="VeryLongName"), *reaches[1:])
+    with pytest.raises(ValueError, match=message):
+        render_ordered_catg(
+            title, controls, (Decimal("1.25"), Decimal("2.5")),
+            (Decimal("0.2"), Decimal("0.3")), explicit_reach_types=True,
+            nodes=nodes, reaches=reaches,
+        )

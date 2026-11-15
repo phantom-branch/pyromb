@@ -68,6 +68,14 @@ def _ordered_label(value: str, what: str) -> str:
     return value
 
 
+def _ordered_graphical_name(value: str, what: str, width: int) -> str:
+    """Reserve a leading field separator and reject fixed-column overflow."""
+    _ordered_label(value, what)
+    if not value.isascii() or len(value) + 1 > width:
+        raise ValueError(f"{what} must be ASCII and at most {width - 1} characters")
+    return f" {value}"
+
+
 class VectorBlock():
     """Builds the vector block for the RORB control file.
     """
@@ -656,6 +664,21 @@ def render_ordered_catg(
         raise ValueError("Graphical node IDs must be consecutive and source ordered")
     if [r.identifier for r in reaches] != list(range(1, len(reaches) + 1)):
         raise ValueError("Graphical reach IDs must be consecutive and source ordered")
+    source_nodes = [node for node in nodes if node.source]
+    if (
+        len(source_nodes) != len(areas_km2)
+        or any(
+            node.area_km2 != area or node.impervious_fraction != fraction
+            for node, area, fraction in zip(source_nodes, areas_km2, impervious_fractions, strict=True)
+        )
+    ):
+        raise ValueError("Graphical source order, area or FI disagrees with ordered computational sources")
+    control_lengths = [control.length_km for control in controls if control.code in (1, 2, 5)]
+    if (
+        len(control_lengths) != len(reaches)
+        or any(reach.length_km != physical for reach, physical in zip(reaches, control_lengths, strict=True))
+    ):
+        raise ValueError("Graphical reach order or physical length disagrees with ordered controls")
     if sum(n.outlet for n in nodes) != 1:
         raise ValueError("Exactly one graphical outlet print 70 is supported")
     ids = {n.identifier for n in nodes}
@@ -666,7 +689,7 @@ def render_ordered_catg(
         _ordered_number(node.impervious_fraction, "Graphical node impervious fraction", places=6)
         if node.impervious_fraction > 1:
             raise ValueError("Graphical node impervious fraction exceeds 1")
-        _ordered_label(node.name, "Graphical node name")
+        _ordered_graphical_name(node.name, "Graphical node name", 3)
     for reach in reaches:
         if (reach.upstream not in ids or reach.downstream not in ids
                 or not math.isfinite(reach.x) or not math.isfinite(reach.y)):
@@ -674,16 +697,16 @@ def render_ordered_catg(
         if reach.length_km <= 0:
             raise ValueError("Graphical reach length must be positive")
         _ordered_number(reach.length_km, "Graphical reach length", places=3)
-        _ordered_label(reach.name, "Graphical reach name")
+        _ordered_graphical_name(reach.name, "Graphical reach name", 9)
     graphics = GraphicsBlock()
     graphics._nodeVector = [{
         "id": n.identifier, "x": n.x, "y": n.y, "icon": 1.0, "basin": int(n.source),
-        "end": int(n.outlet), "ds": n.downstream, "name": f" {n.name}",
+        "end": int(n.outlet), "ds": n.downstream, "name": _ordered_graphical_name(n.name, "Graphical node name", 3),
         "area": n.area_km2, "fi": n.impervious_fraction,
         "print": 70 if n.outlet else 0, "excess": 0, "comment": 0,
     } for n in nodes]
     graphics._reachVector = [{
-        "id": r.identifier, "name": f" {r.name}", "us": r.upstream,
+        "id": r.identifier, "name": _ordered_graphical_name(r.name, "Graphical reach name", 9), "us": r.upstream,
         "ds": r.downstream, "translation": 0, "type": 1, "print": 0,
         "length": r.length_km, "slope": 0.0, "npoints": 1, "comment": 0,
         "x": r.x, "y": r.y,
