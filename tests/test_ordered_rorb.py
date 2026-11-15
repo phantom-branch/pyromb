@@ -36,7 +36,8 @@ def test_order_and_physical_lengths_are_not_derived_from_normalized_xy() -> None
                                (Decimal("0.2"), Decimal("0.3")), explicit_reach_types=True,
                                nodes=nodes, reaches=reaches)
     assert data.startswith("MODEL\nC RORB_GE 6.45\n")
-    assert data.index("1,1,5.000,-99") < data.index("3\n") < data.index("1,1,4.000,-99")
+    vector = data.split("C END RORB_GE\n", 1)[1]
+    assert "0\n1,1,5.000,-99\n3\n1,1,4.000,-99\n4\n5,1,2.500,-99\n7\nOutlet\n0\n" in vector
     assert "5,1,2.500,-99" in data
     assert "7\nOutlet\n0\n" in data
     assert "C #NODES\nC      4\n" in data
