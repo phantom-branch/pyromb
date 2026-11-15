@@ -400,12 +400,12 @@ class GraphicsBlock():
         self._replaceIDTags(self._reachVector)
         self._normalizeCoordinates(preserve_aspect=preserve_aspect)
         if version == "6.45":
-            header = resources.rorb.GRAPHICAL_HEADER.replace("REACH\\n", f"{title}\\n", 1)
+            header = resources.rorb.GRAPHICAL_HEADER.replace("REACH\n", f"{title}\n", 1)
         elif version == "002":
             header = (
-                f"{title}\\nC RORB_GE 002\\nC\\nC {title}\\nC\\n"
-                "C #FILE COMMENTS\\nC   0\\nC\\nC #SUB-AREA AREA COMMENTS\\nC   0\\nC\\n"
-                "C #IMPERVIOUS FRACTION COMMENTS\\nC   0\\nC\\nC #BACKGROUND IMAGE\\nC  T  F\\nC\\n"
+                f"{title}\nC RORB_GE 002\nC\nC {title}\nC\n"
+                "C #FILE COMMENTS\nC   0\nC\nC #SUB-AREA AREA COMMENTS\nC   0\nC\n"
+                "C #IMPERVIOUS FRACTION COMMENTS\nC   0\nC\nC #BACKGROUND IMAGE\nC  T  F\nC\n"
             )
         else:
             raise ValueError(f"Unknown graphical export version {version!r}")
@@ -638,7 +638,7 @@ def render_ordered_catg(
     if not nodes and not reaches and not explicit_reach_types:
         return (
             f"{title}\nC RORB_GE 002\nC #NODES\nC 0\nC #REACHES\nC 0\n"
-            "C #STORAGES\nC 0\nC #INFLOW/OUTFLOW\nC 0\nC END RORB_GE\n" + vector
+            "C #STORAGES\nC 0\nC #INFLOW/OUTFLOW\nC 0\nC END RORB_GE\nC\n" + vector
         )
     if not nodes or not reaches or len(reaches) != len(nodes) - 1:
         raise ValueError("Edited RORB_GE 6.45 requires explicit ordered graphical nodes and reaches")
